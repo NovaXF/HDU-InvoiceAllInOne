@@ -1,0 +1,71 @@
+name: Windows release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Configure release version
+        shell: pwsh
+        env:
+          RELEASE_REF: ${{ github.ref_name }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+        run: |
+          @'
+          import os
+          from pathlib import Path
+          from app_version import APP_VERSION
+          from core.app_updates import version_tuple
+          ref = os.environ['RELEASE_REF']
+          version = ref[1:] if ref.startswith('v') else APP_VERSION
+          version_tuple(version)
+          Path('app_version.py').write_text(
+              f'APP_VERSION = {version!r}\nGITHUB_REPOSITORY = {os.environ["RELEASE_REPOSITORY"]!r}\n', encoding='utf-8')
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as output:
+              output.write(f'APP_VERSION={version}\n')
+          '@ | python -
+      - name: Install build dependencies
+        run: python -m pip install -r requirements.txt pyinstaller
+      - name: Run tests
+        run: python -B -m unittest discover -s tests -v
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - name: Bundle application
+        run: >-
+          python -m PyInstaller --noconfirm --clean --windowed --onedir
+          --name HDU-InvoiceAllInOne --add-data "assets:assets"
+          --collect-all rapidocr_onnxruntime --collect-all onnxruntime main.py
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (!(Test-Path -LiteralPath $compiler)) {
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          & $compiler "/DAppVersion=$env:APP_VERSION" packaging/installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v$env:APP_VERSION"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --title $tag --generate-notes --target $env:GITHUB_SHA
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          gh release upload $tag "release/HDU-InvoiceAllInOne-v$env:APP_VERSION-Setup.exe" --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

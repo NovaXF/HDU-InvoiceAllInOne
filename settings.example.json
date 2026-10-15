@@ -1,0 +1,13 @@
+{
+  "output_dir": "",
+  "stack_rules": {
+    "max_count": 25,
+    "max_amount": 2500.0
+  },
+  "current_reimburser": "",
+  "common_reimbursers": [],
+  "current_remark": "",
+  "common_remarks": [],
+  "theme": "indigo_khaki",
+  "github_repository": "NovaXF/HDU-InvoiceAllInOne"
+}
