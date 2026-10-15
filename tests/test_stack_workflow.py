@@ -398,7 +398,7 @@ class StackWorkflowTests(unittest.TestCase):
         self.assertTrue(LOGO_PATH.is_file())
         self.assertEqual(LOGO_PATH.parent.name, "assets")
         self.assertEqual(splash.version_label.text(), f"v{APP_VERSION}")
-        self.assertFalse(splash.logo_label.pixmap().isNull())
+        self.assertTrue(splash.logo_label.renderer.isValid())
         splash.close()
 
 

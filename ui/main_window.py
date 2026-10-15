@@ -2323,12 +2323,14 @@ class MainWindow(QMainWindow):
         version_row.addStretch()
         self.btn_check_updates = QPushButton("检查更新")
         self.btn_check_updates.setObjectName("OutlineButton")
-        self.btn_check_updates.setFixedHeight(36)
+        self.btn_check_updates.setProperty("updateAction", True)
+        self.btn_check_updates.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.btn_check_updates.clicked.connect(self._check_updates)
         version_row.addWidget(self.btn_check_updates)
         self.btn_install_update = QPushButton("一键更新")
         self.btn_install_update.setObjectName("PrimaryButton")
-        self.btn_install_update.setFixedHeight(36)
+        self.btn_install_update.setProperty("updateAction", True)
+        self.btn_install_update.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.btn_install_update.setEnabled(False)
         self.btn_install_update.clicked.connect(self._install_update)
         version_row.addWidget(self.btn_install_update)
@@ -3128,6 +3130,16 @@ class MainWindow(QMainWindow):
                 background: {outline_hover};
                 border-color: {primary};
                 color: {primary};
+            }}
+            QPushButton#OutlineButton[updateAction="true"], QPushButton#PrimaryButton[updateAction="true"] {{
+                min-width: 100px;
+                max-width: 100px;
+                min-height: 38px;
+                max-height: 38px;
+                padding: 0;
+                border-radius: 12px;
+                font-size: 13px;
+                font-weight: 800;
             }}
             QPushButton#GhostButton {{
                 background: transparent;

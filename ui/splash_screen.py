@@ -1,107 +1,140 @@
+import json
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QPixmap
-from PySide6.QtWidgets import QLabel, QProgressBar, QSplashScreen, QVBoxLayout, QWidget
+from PySide6.QtCore import QByteArray, QEasingCurve, QRectF, Qt, QVariantAnimation
+from PySide6.QtGui import QPainter
+from PySide6.QtSvg import QSvgRenderer
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QProgressBar, QVBoxLayout, QWidget
+
 from app_version import APP_VERSION
-
-APP_NAME = "HDU Invoice All In One"
-LOGO_PATH = Path(__file__).resolve().parent.parent / "assets" / "logo.svg"
+from ui.main_window import DEFAULT_THEME_KEY, THEMES
 
 
-class SplashScreen(QSplashScreen):
-    def __init__(self):
-        super().__init__(QPixmap(420, 360))
-        self.setWindowFlag(Qt.WindowStaysOnTopHint)
-        self.setWindowFlag(Qt.FramelessWindowHint)
+APP_NAME = "HDU 发票工作台"
+ASSET_DIR = Path(__file__).resolve().parent.parent / "assets"
+LOGO_PATH = ASSET_DIR / "logo.svg"
 
-        self.container = QWidget()
-        self.container.setObjectName("splashContainer")
-        self.container.setFixedSize(420, 360)
-        self.container.setStyleSheet(
-            """
-            QWidget#splashContainer {
-                background: qlineargradient(
-                    x1: 0, y1: 0, x2: 1, y2: 1,
-                    stop: 0 #0f172a,
-                    stop: 1 #1e293b
-                );
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 18px;
-            }
-            QLabel {
-                color: white;
-                background: transparent;
-            }
-            QProgressBar {
-                border: none;
-                background: rgba(255, 255, 255, 0.12);
-                border-radius: 6px;
-                text-align: center;
-                color: rgba(255, 255, 255, 0.92);
-                min-height: 12px;
-                max-height: 12px;
-            }
-            QProgressBar::chunk {
-                border-radius: 6px;
-                background: qlineargradient(
-                    x1: 0, y1: 0, x2: 1, y2: 0,
-                    stop: 0 #22c55e,
-                    stop: 1 #06b6d4
-                );
-            }
-            """
-        )
+
+class SplashLogo(QWidget):
+    """Paint vector paths directly on Qt's DPI-aware widget surface."""
+
+    def __init__(self, filename: str, color: str, width: int, height: int):
+        super().__init__()
+        source = (ASSET_DIR / filename).read_text(encoding="utf-8")
+        source = source.replace("#2563eb", color).replace("#2563EB", color)
+        self.renderer = QSvgRenderer(QByteArray(source.encode("utf-8")), self)
+        self.setFixedSize(width, height)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        self.renderer.render(painter, QRectF(self.rect()))
+        painter.end()
+
+
+class SplashScreen(QWidget):
+    def __init__(self, theme_key: str | None = None):
+        super().__init__(None, Qt.SplashScreen | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setWindowTitle(APP_NAME)
+        if theme_key is None:
+            try:
+                settings = json.loads((ASSET_DIR.parent / "settings.json").read_text(encoding="utf-8"))
+                theme_key = settings.get("theme") if isinstance(settings, dict) else None
+            except (OSError, ValueError):
+                theme_key = None
+        self.theme = THEMES.get(theme_key, THEMES[DEFAULT_THEME_KEY])
+        theme = self.theme
+        self.resize(520, 296)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.container = QFrame()
+        self.container.setObjectName("SplashPanel")
+        outer.addWidget(self.container)
+        self.setStyleSheet(f"""
+            QFrame#SplashPanel {{
+                background: {theme['panel']};
+                border: 1px solid {theme['border']};
+                border-radius: 20px;
+            }}
+            QLabel {{ background: transparent; border: none; color: {theme['text']}; }}
+            QLabel#SplashEyebrow {{ color: {theme['muted']}; font-size: 11px; font-weight: 600; }}
+            QLabel#SplashTitle {{ font-size: 30px; font-weight: 800; }}
+            QLabel#SplashSubtitle {{ color: {theme['muted']}; font-size: 12px; }}
+            QLabel#SplashVersion {{
+                color: {theme['muted']}; background: {theme['panel_alt']};
+                border: 1px solid {theme['border']}; border-radius: 11px;
+                padding: 4px 10px; font-size: 11px; font-weight: 600;
+            }}
+            QLabel#SplashStatus {{ color: {theme['muted']}; font-size: 12px; }}
+            QFrame#SplashDivider {{ background: {theme['border']}; border: none; }}
+            QProgressBar {{
+                border: none; background: {theme['accent_soft']}; border-radius: 2px;
+                min-height: 4px; max-height: 4px;
+            }}
+            QProgressBar::chunk {{ background: {theme['accent']}; border-radius: 2px; }}
+        """)
 
         layout = QVBoxLayout(self.container)
-        layout.setContentsMargins(36, 28, 36, 28)
-        layout.setSpacing(14)
-
-        self.logo_label = QLabel()
-        self.logo_label.setAlignment(Qt.AlignCenter)
-        self.logo_label.setFixedHeight(220)
-        if LOGO_PATH.is_file():
-            pixmap = QPixmap(str(LOGO_PATH))
-            if not pixmap.isNull():
-                self.logo_label.setPixmap(
-                    pixmap.scaled(220, 220, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                )
-
-        self.title_label = QLabel(APP_NAME)
-        self.title_label.setAlignment(Qt.AlignCenter)
-        self.title_label.setFont(QFont("Microsoft YaHei UI", 18, QFont.Bold))
-
+        layout.setContentsMargins(30, 26, 30, 24)
+        layout.setSpacing(0)
+        header = QHBoxLayout()
+        header.setSpacing(10)
+        self.logo_label = SplashLogo("logo.svg", theme["accent"], 36, 36)
+        header.addWidget(self.logo_label)
+        eyebrow = QLabel("INVOICE WORKBENCH")
+        eyebrow.setObjectName("SplashEyebrow")
+        header.addWidget(eyebrow)
+        header.addStretch()
         self.version_label = QLabel(f"v{APP_VERSION}")
-        self.version_label.setAlignment(Qt.AlignCenter)
-        self.version_label.setFont(QFont("Microsoft YaHei UI", 10))
-        self.version_label.setStyleSheet("color: rgba(255, 255, 255, 0.72);")
-
-        self.status_label = QLabel("正在启动…")
-        self.status_label.setAlignment(Qt.AlignCenter)
-        self.status_label.setFont(QFont("Microsoft YaHei UI", 10))
-        self.status_label.setStyleSheet("color: rgba(255, 255, 255, 0.84);")
-
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 0)
-        self.progress.setTextVisible(False)
-
-        layout.addWidget(self.logo_label)
+        self.version_label.setObjectName("SplashVersion")
+        header.addWidget(self.version_label, 0, Qt.AlignVCenter)
+        layout.addLayout(header)
+        layout.addSpacing(24)
+        self.title_label = QLabel(APP_NAME)
+        self.title_label.setObjectName("SplashTitle")
         layout.addWidget(self.title_label)
-        layout.addWidget(self.version_label)
         layout.addSpacing(6)
-        layout.addWidget(self.status_label)
+        subtitle = QLabel("发票识别 · 智能分叠 · 报销整理")
+        subtitle.setObjectName("SplashSubtitle")
+        layout.addWidget(subtitle)
+        layout.addStretch(1)
+        divider = QFrame()
+        divider.setObjectName("SplashDivider")
+        divider.setFixedHeight(1)
+        layout.addWidget(divider)
+        layout.addSpacing(16)
+        footer = QHBoxLayout()
+        self.status_label = QLabel("正在启动…")
+        self.status_label.setObjectName("SplashStatus")
+        footer.addWidget(self.status_label)
+        footer.addStretch()
+        self.wordmark = SplashLogo("novax-wordmark.svg", theme["muted"], 88, 23)
+        footer.addWidget(self.wordmark)
+        layout.addLayout(footer)
+        layout.addSpacing(12)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setTextVisible(False)
         layout.addWidget(self.progress)
 
-        self._render()
+        self._progress_animation = QVariantAnimation(self)
+        self._progress_animation.setDuration(160)
+        self._progress_animation.setEasingCurve(QEasingCurve.OutCubic)
+        self._progress_animation.valueChanged.connect(lambda value: self.progress.setValue(round(value)))
 
-    def _render(self):
-        pixmap = QPixmap(self.container.size())
-        pixmap.fill(Qt.transparent)
-        self.container.render(pixmap)
-        self.setPixmap(pixmap)
-        self.setMask(pixmap.mask())
-        self.resize(pixmap.size())
-
-    def update_status(self, message: str):
+    def update_status(self, message: str, progress: int | None = None):
         self.status_label.setText(message)
-        self._render()
+        if progress is not None:
+            self._progress_animation.stop()
+            self._progress_animation.setStartValue(self.progress.value())
+            self._progress_animation.setEndValue(max(0, min(progress, 100)))
+            self._progress_animation.start()
+
+    def finish(self, window):
+        self._progress_animation.stop()
+        self.progress.setValue(100)
+        self.close()
