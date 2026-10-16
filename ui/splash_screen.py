@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QEasingCurve, QRectF, Qt, QVariantAnimation
@@ -7,6 +6,7 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QProgressBar, QVBoxLayout, QWidget
 
 from app_version import APP_VERSION
+from core.app_paths import load_settings
 from ui.main_window import DEFAULT_THEME_KEY, THEMES
 
 
@@ -39,11 +39,7 @@ class SplashScreen(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setWindowTitle(APP_NAME)
         if theme_key is None:
-            try:
-                settings = json.loads((ASSET_DIR.parent / "settings.json").read_text(encoding="utf-8"))
-                theme_key = settings.get("theme") if isinstance(settings, dict) else None
-            except (OSError, ValueError):
-                theme_key = None
+            theme_key = load_settings().get("theme")
         self.theme = THEMES.get(theme_key, THEMES[DEFAULT_THEME_KEY])
         theme = self.theme
         self.resize(520, 296)

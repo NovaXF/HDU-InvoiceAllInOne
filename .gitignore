@@ -5,6 +5,7 @@ __pycache__/
 .coverage
 htmlcov/
 .venv/
+.venv-build/
 venv/
 build/
 dist/
@@ -20,6 +21,8 @@ release/
 /.idea/
 /settings.json
 /settings.local.json
+/.local-data-location.json
+/updates/
 .env
 .env.*
 !.env.example

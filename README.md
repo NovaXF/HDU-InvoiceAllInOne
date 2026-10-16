@@ -13,6 +13,11 @@
 
 ## 运行
 
+从 [GitHub Release](https://github.com/NovaXF/HDU-InvoiceAllInOne/releases/latest)
+下载 `HDU-InvoiceAllInOne-v<VERSION>-Portable.exe`，双击即可运行。
+便携版包含 Python、界面依赖和 OCR 模型，无需安装或额外配置环境。
+启动时会自动展开依赖到临时目录，因此可能需要等待几秒。
+
 建议使用 Windows 和 Python 3.11：
 
 ```powershell
@@ -24,6 +29,13 @@ python main.py
 
 也可以在安装依赖后运行 `run.bat`。程序会在需要时创建本机的
 `settings.json`；仓库内的 `settings.example.json` 仅提供无个人信息的配置示例。
+打包后的应用将个人设置保存在 `%LOCALAPPDATA%\HDU-InvoiceAllInOne\settings.json`，
+不会保存到单文件程序退出后会被清理的临时目录。
+在“设置 → 本地数据位置”可以打开数据文件夹或更改位置，更改时会复制已有设置，
+保留原设置备份。发票源文件和报销输出目录单独管理。
+
+以后在设置中点击“检查更新”和“一键更新”，保存工作区后即可下载、校验新版，
+自动替换当前程序并重新启动。更新前的程序副本保留在本地数据目录的 `updates` 内。
 
 ## 基本操作
 
@@ -38,13 +50,13 @@ python main.py
 
 ## 隐私与发布
 
-发票与截图的识别在本地进行。检查更新时访问 GitHub，下载新版安装包
+发票与截图的识别在本地进行。检查更新时访问 GitHub，下载新版便携程序
 也需要网络。应用不会将发票、截图或报销人名单上传到 GitHub。
 
 个人设置、发票、导出结果、编辑器配置、缓存和调试截图均不应提交。
 `.gitignore` 已覆盖这些常见文件；分享文件前仍需确认其中没有个人信息。
 
-当前版本由 `app_version.py` 统一定义。Windows 安装包和 Release 发布方式
+当前版本由 `app_version.py` 统一定义。Windows 便携版和 Release 发布方式
 见 [发布说明](packaging/RELEASES.md)。
 
 ## 测试

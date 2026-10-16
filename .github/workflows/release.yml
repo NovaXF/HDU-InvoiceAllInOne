@@ -41,21 +41,10 @@ jobs:
         run: python -B -m unittest discover -s tests -v
         env:
           QT_QPA_PLATFORM: offscreen
-      - name: Bundle application
-        run: >-
-          python -m PyInstaller --noconfirm --clean --windowed --onedir
-          --name HDU-InvoiceAllInOne --add-data "assets:assets"
-          --collect-all rapidocr_onnxruntime --collect-all onnxruntime main.py
-      - name: Build installer
-        shell: pwsh
-        run: |
-          $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
-          if (!(Test-Path -LiteralPath $compiler)) {
-            choco install innosetup --no-progress -y
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-          & $compiler "/DAppVersion=$env:APP_VERSION" packaging/installer.iss
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build portable executable
+        run: python packaging/build_portable.py --dist-dir release
+      - name: Verify portable executable
+        run: python packaging/verify_portable.py "release/HDU-InvoiceAllInOne-v${{ env.APP_VERSION }}-Portable.exe"
       - name: Publish release
         shell: pwsh
         env:
@@ -67,5 +56,5 @@ jobs:
             gh release create $tag --title $tag --generate-notes --target $env:GITHUB_SHA
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-          gh release upload $tag "release/HDU-InvoiceAllInOne-v$env:APP_VERSION-Setup.exe" --clobber
+          gh release upload $tag "release/HDU-InvoiceAllInOne-v$env:APP_VERSION-Portable.exe" --clobber
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

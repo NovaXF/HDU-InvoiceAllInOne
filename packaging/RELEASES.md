@@ -4,24 +4,51 @@ The current version is defined in `app_version.py`. Settings and the help page
 read the same value. The settings page accepts a public GitHub repository URL.
 Public releases can be checked without asking end users to sign in.
 
-After this project is connected to GitHub, push a tag such as `v1.0.1` to run
-`.github/workflows/release.yml`. The workflow tests the code, builds the Windows
-application and installer, then uploads the installer to that tag's Release.
-The packaged application receives its version and GitHub repository automatically.
-The workflow can also be run manually for the version in `app_version.py`.
+Push a tag such as `v1.0.1` to run `.github/workflows/release.yml`. The workflow
+tests the code, builds a standalone Windows portable executable, verifies it in
+an isolated directory without Python sources, and uploads it to the Release.
+The packaged version and GitHub repository are configured automatically.
+The workflow can also run manually for the version in `app_version.py`.
 
-The updater uses the latest non-draft, non-prerelease GitHub Release. Version tags
-must use three numeric parts. An update is offered only if the release has a
-Windows `.msi` or `Setup`/`Installer` `.exe` asset with a GitHub SHA-256 digest.
-Downloads are streamed to a temporary folder and checked against the asset size
-and digest before the installer can be launched. An update without a suitable
-installer still offers a link to its release notes.
+## Portable builds
 
-Users save their workspace first, then click “一键更新”. The installer is downloaded
-and launched; normal installer prompts complete the upgrade. The app does not
-silently overwrite source files or discard an unsaved workspace. Source-code
-checkouts continue to use their existing Python environment; the installer creates
-or upgrades the installed Windows application.
+Run `python packaging/build_portable.py` with the application dependencies and
+PyInstaller installed. The output is one file:
+`dist/HDU-InvoiceAllInOne-v<VERSION>-Portable.exe`.
+It includes Python, UI resources and OCR models. Users download it and double-click;
+no installer or adjacent dependency folders are needed. PyInstaller expands its
+runtime into a temporary folder at launch, which can take a few seconds.
 
-The generated installer has a fixed application ID and installs for the current
-Windows user. It does not package local `settings.json`, invoice files or screenshots.
+Run `python packaging/verify_portable.py` to exercise the executable in isolation,
+including UI resources, persistent settings, data migration, PDF parsing and OCR.
+Personal settings, invoice files and screenshots are never bundled.
+
+## Local data
+
+Packaged builds initially save preferences to
+`%LOCALAPPDATA%\HDU-InvoiceAllInOne\settings.json`.
+The settings page can open this folder or choose a different location. Relocation
+copies the current preferences, refuses to overwrite different existing settings,
+and keeps the original as a backup. A small pointer in the default data folder
+remembers the chosen location across launches and application updates.
+Invoice source files and exported workspaces use their independently chosen paths.
+Source checkouts initially use project-local `settings.json`; their custom-location
+pointer is ignored by Git. Legacy settings beside an executable are read as a
+migration fallback.
+
+## Updates
+
+The updater reads the latest non-draft, non-prerelease GitHub Release. Tags use
+three numeric version parts. It accepts only an asset ending in `-Portable.exe`
+from the configured repository with a GitHub SHA-256 digest. Downloaded bytes
+must match both the published size and digest before execution.
+
+Users save their workspace, then choose one-click update. A separate instance of
+the downloaded executable waits for the current executable to exit, atomically
+replaces it at its existing path, and restarts it. The executable may have been
+renamed by the user. Before replacement, the old executable is copied into the
+local data folder under `updates/update-*/previous.exe`; preferences are preserved.
+If the new process cannot be launched, replacement is rolled back. A result report
+is kept alongside the backup. Updating requires write access to the executable's
+folder. Source checkouts download the portable executable and open its folder
+instead of replacing their Python sources.

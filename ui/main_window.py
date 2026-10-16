@@ -1,5 +1,7 @@
 import json
 import subprocess
+import shutil
+import sys
 from copy import deepcopy
 from functools import wraps
 from pathlib import Path
@@ -58,7 +60,9 @@ from core.order_matcher import bind_screenshot_to_invoice, match_screenshots_to_
 from core.order_screenshot_parser import extract_paid_amount_details
 from core.pdf_parser import extract_invoice_data
 from core.recycle_bin import recycle_file
-from core.app_updates import check_latest_release, download_installer, normalize_repository, version_tuple
+from core.app_updates import check_latest_release, download_release, normalize_repository, version_tuple
+from core.portable_update import launch_helper, prepare_update
+from core.app_paths import load_settings, relocate_data_directory, settings_path, write_json_atomic
 from app_version import APP_VERSION, GITHUB_REPOSITORY
 from core.stack_splitter import (
     MAX_AMOUNT,
@@ -72,7 +76,6 @@ from core.stack_splitter import (
 from models.invoice import Batch, DateGroup, Invoice, OrderScreenshot
 
 
-SETTINGS_FILE = "settings.json"
 ICON_DIR = Path(__file__).resolve().parent.parent / "assets" / "icons"
 DEFAULT_THEME_KEY = "indigo_khaki"
 THEMED_SVG_PIXMAP_CACHE: dict[tuple[str, str, int], QPixmap] = {}
@@ -515,7 +518,7 @@ class UpdateWorker(QThread):
 
     def run(self):
         try:
-            result = (download_installer(self.release, self.repository, self.progress.emit)
+            result = (download_release(self.release, self.repository, self.progress.emit)
                       if self.release else check_latest_release(self.repository))
             self.result.emit(result)
         except Exception as error:
@@ -1861,7 +1864,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.settings_path = Path(__file__).resolve().parent.parent / SETTINGS_FILE
+        self.settings_path = settings_path()
         self.settings = self._load_settings()
         self.invoices: list[Invoice] = []
         self.screenshots: list[OrderScreenshot] = []
@@ -1883,6 +1886,7 @@ class MainWindow(QMainWindow):
         self._update_worker = None
         self._update_release = None
         self._downloaded_installer = None
+        self._pending_update_path = None
 
         self._build_ui()
         for button in self.findChildren(QPushButton):
@@ -2246,9 +2250,10 @@ class MainWindow(QMainWindow):
                 "设置页会显示当前版本；使用说明标题下的“适用版本”与其保持一致。",
                 [
                     "填写公开 GitHub 仓库地址后点击“检查更新”，程序会在后台查找最新正式 Release；未发布版本时会明确提示。",
-                    "发现带有可校验 Windows 安装包的新版后，“一键更新”才会启用；没有安装包时可点击“查看发布说明”。",
-                    "更新前先保存工作区；安装包下载完成并通过校验后，启动安装程序，按提示完成升级。",
-                    "源码运行环境不会被直接覆盖；安装包用于创建或升级已安装的 Windows 应用。",
+                    "发现带有可校验 Windows 单文件便携版的新版后，“一键更新”才会启用；也可以点击“查看发布说明”。",
+                    "更新前先保存工作区；新版下载完成并通过校验后，程序会自动替换并重新启动，无需安装。旧程序副本保留在本地数据目录的 updates 文件夹。",
+                    "在设置的“本地数据位置”可以打开文件夹或更改保存位置；现有设置会复制到新位置，原设置保留为备份，发票和报销输出目录单独管理。",
+                    "源码运行时，一键更新会下载便携程序并打开所在文件夹，现有 Python 环境继续保留。",
                 ],
             ),
         ]
@@ -2292,7 +2297,19 @@ class MainWindow(QMainWindow):
 
     def _build_settings_page(self) -> QWidget:
         page = QWidget()
-        layout = QVBoxLayout(page)
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setObjectName("SettingsScroll")
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.viewport().setObjectName("SettingsViewport")
+        content = QWidget()
+        content.setObjectName("SettingsContent")
+        layout = QVBoxLayout(content)
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
@@ -2352,6 +2369,33 @@ class MainWindow(QMainWindow):
         self.btn_release_page.clicked.connect(self._open_release_page)
         version_layout.addWidget(self.btn_release_page, 0, Qt.AlignLeft)
         layout.addWidget(self.version_panel)
+
+        data_panel = QFrame()
+        data_panel.setObjectName("Panel")
+        data_layout = QVBoxLayout(data_panel)
+        data_layout.setContentsMargins(22, 16, 22, 16)
+        data_layout.setSpacing(8)
+        data_title = QLabel("本地数据位置")
+        data_title.setObjectName("SectionTitle")
+        data_layout.addWidget(data_title)
+        data_row = QHBoxLayout()
+        self.edit_data_directory = QLineEdit(str(self.settings_path.parent))
+        self.edit_data_directory.setReadOnly(True)
+        data_row.addWidget(self.edit_data_directory, 1)
+        self.btn_open_data_directory = QPushButton("打开文件夹")
+        self.btn_open_data_directory.setObjectName("OutlineButton")
+        self.btn_open_data_directory.clicked.connect(self._open_data_directory)
+        data_row.addWidget(self.btn_open_data_directory)
+        self.btn_move_data_directory = QPushButton("更改位置")
+        self.btn_move_data_directory.setObjectName("OutlineButton")
+        self.btn_move_data_directory.clicked.connect(self._change_data_directory)
+        data_row.addWidget(self.btn_move_data_directory)
+        data_layout.addLayout(data_row)
+        data_hint = QLabel("保存主题、常用报销人及偏好设置。更改位置会复制现有设置，发票和报销输出目录单独管理。")
+        data_hint.setObjectName("HelperText")
+        data_hint.setWordWrap(True)
+        data_layout.addWidget(data_hint)
+        layout.addWidget(data_panel)
 
         theme_panel = QFrame()
         theme_panel.setObjectName("Panel")
@@ -2415,6 +2459,26 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         return page
 
+    def _open_data_directory(self):
+        self.settings_path.parent.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.settings_path.parent)))
+
+    def _change_data_directory(self):
+        if self._workspace_busy() or (self._update_worker is not None and self._update_worker.isRunning()):
+            QMessageBox.information(self, "请稍候", "识别或更新完成后，再更改本地数据位置。")
+            return
+        directory = QFileDialog.getExistingDirectory(self, "选择本地数据位置", str(self.settings_path.parent))
+        if not directory:
+            return
+        try:
+            destination = relocate_data_directory(Path(directory), self.settings)
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, "无法更改位置", str(error))
+            return
+        self.settings_path = destination
+        self.edit_data_directory.setText(str(destination.parent))
+        self.edit_data_directory.setToolTip("已复制现有设置；原位置的设置保留为备份。")
+
     def _save_update_repository(self):
         value = self.edit_update_repository.text().strip()
         if value:
@@ -2463,6 +2527,9 @@ class MainWindow(QMainWindow):
     def _on_update_finished(self):
         self.btn_check_updates.setEnabled(True)
         self.edit_update_repository.setEnabled(True)
+        if self._pending_update_path is not None:
+            path, self._pending_update_path = self._pending_update_path, None
+            self._on_installer_ready(path)
 
     def _on_update_checked(self, release):
         self._update_release = release
@@ -2472,9 +2539,9 @@ class MainWindow(QMainWindow):
         if not newer:
             self.lbl_update_status.setText(f"当前已是最新版本 v{APP_VERSION}。")
         elif release.asset is None:
-            self.lbl_update_status.setText(f"发现 {release.version}，此版本尚未提供可校验的安装包，可前往发布页查看。")
+            self.lbl_update_status.setText(f"发现 {release.version}，此版本尚未提供可校验的便携版，可前往发布页查看。")
         else:
-            self.lbl_update_status.setText(f"发现 {release.version}，可一键下载并启动安装。")
+            self.lbl_update_status.setText(f"发现 {release.version}，可一键下载并重启更新，无需安装。")
 
     def _on_update_error(self, message):
         self.lbl_update_status.setText(f"更新未完成：{message}")
@@ -2498,22 +2565,32 @@ class MainWindow(QMainWindow):
             return
         self.btn_install_update.setEnabled(False)
         worker = UpdateWorker(normalize_repository(self.edit_update_repository.text()), self._update_release)
-        worker.progress.connect(lambda value: self.lbl_update_status.setText(f"正在下载安装包… {value}%"))
+        worker.progress.connect(lambda value: self.lbl_update_status.setText(f"正在下载便携版… {value}%"))
         self._start_update_worker(worker, self._on_installer_ready)
 
     def _on_installer_ready(self, path):
         self._downloaded_installer = path
         if self._workspace_busy() or self._undo_history:
-            self.lbl_update_status.setText("安装包已下载；请先保存工作区，再点击“一键更新”。")
+            self.lbl_update_status.setText("新版已下载；请先保存工作区，再点击“一键更新”。")
             self.btn_install_update.setEnabled(True)
             return
+        if self._update_worker is not None and self._update_worker.isRunning():
+            self._pending_update_path = path
+            return
         try:
-            if path.suffix.lower() == ".msi":
-                subprocess.Popen(["msiexec.exe", "/i", str(path)])
+            if getattr(sys, "frozen", False):
+                plan = prepare_update(path, Path(sys.executable), self.settings_path.parent)
+                launch_helper(path, plan)
+                self.close()
             else:
-                subprocess.Popen([str(path)])
-            self.lbl_update_status.setText("安装程序已启动，请按安装提示完成更新。")
-        except OSError as error:
+                directory = self.settings_path.parent / "updates"
+                directory.mkdir(parents=True, exist_ok=True)
+                destination = directory / path.name
+                if destination.resolve() != path.resolve():
+                    shutil.copy2(path, destination)
+                self.lbl_update_status.setText("便携版已下载，已打开所在文件夹；源码运行环境保持不变。")
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
+        except (OSError, ValueError) as error:
             self._on_update_error(str(error))
 
     def closeEvent(self, event):
@@ -2817,18 +2894,10 @@ class MainWindow(QMainWindow):
         return frame
 
     def _load_settings(self) -> dict:
-        if not self.settings_path.is_file():
-            return {}
-        try:
-            with open(self.settings_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            return {}
-        return data if isinstance(data, dict) else {}
+        return load_settings(self.settings_path)
 
     def _save_settings(self) -> None:
-        with open(self.settings_path, "w", encoding="utf-8") as f:
-            json.dump(self.settings, f, ensure_ascii=False, indent=2)
+        write_json_atomic(self.settings_path, self.settings)
 
     def _apply_theme_settings(self) -> None:
         theme_key = self.settings.get("theme")
@@ -3031,7 +3100,8 @@ class MainWindow(QMainWindow):
                 border: 1px dashed {border};
                 border-radius: 18px;
             }}
-            QScrollArea#HelpScroll, QWidget#HelpScrollViewport, QWidget#HelpContent {{
+            QScrollArea#HelpScroll, QWidget#HelpScrollViewport, QWidget#HelpContent,
+            QScrollArea#SettingsScroll, QWidget#SettingsViewport, QWidget#SettingsContent {{
                 background: transparent;
                 border: none;
             }}

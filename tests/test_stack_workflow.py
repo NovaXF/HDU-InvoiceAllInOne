@@ -387,10 +387,36 @@ class StackWorkflowTests(unittest.TestCase):
             self.window._on_installer_ready(Path("Setup.exe"))
         launch.assert_not_called()
 
-    def test_ready_verified_installer_launches(self):
-        with patch("ui.main_window.subprocess.Popen") as launch:
-            self.window._on_installer_ready(Path("HDU-Setup.exe"))
-        launch.assert_called_once_with(["HDU-Setup.exe"])
+    def test_source_update_download_is_kept_without_overwriting_source(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "HDU-Portable.exe"
+            source.write_bytes(b"verified download")
+            self.window.settings_path = root / "data" / "settings.json"
+            with patch("ui.main_window.sys.frozen", False, create=True), patch("ui.main_window.QDesktopServices.openUrl") as open_url:
+                self.window._on_installer_ready(source)
+            self.assertEqual((root / "data" / "updates" / source.name).read_bytes(), source.read_bytes())
+            open_url.assert_called_once()
+
+    def test_frozen_update_starts_helper_then_closes(self):
+        source = Path("HDU-Portable.exe")
+        with patch("ui.main_window.sys.frozen", True, create=True), patch("ui.main_window.prepare_update", return_value=Path("plan.json")) as prepare, patch("ui.main_window.launch_helper") as launch, patch.object(self.window, "close") as close:
+            self.window._on_installer_ready(source)
+        prepare.assert_called_once()
+        launch.assert_called_once_with(source, Path("plan.json"))
+        close.assert_called_once()
+
+    def test_settings_data_location_moves_and_survives_reload(self):
+        from core.app_paths import load_settings, settings_path
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            self.window.settings_path = root / "source" / "settings.json"
+            with patch("core.app_paths.RESOURCE_ROOT", root / "source"), patch("core.app_paths.sys.frozen", False, create=True), patch("ui.main_window.QFileDialog.getExistingDirectory", return_value=str(root / "new-data")):
+                self.window._change_data_directory()
+                self.assertEqual(self.window.settings_path, root / "new-data" / "settings.json")
+                self.assertEqual(settings_path(), self.window.settings_path)
+                self.assertEqual(self.window.edit_data_directory.text(), str(self.window.settings_path.parent))
+                self.assertEqual(load_settings(), self.window.settings)
 
     def test_splash_uses_bundled_logo_and_shared_version(self):
         from ui.splash_screen import SplashScreen, LOGO_PATH

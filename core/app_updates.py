@@ -1,4 +1,4 @@
-"""GitHub Releases update checks and verified Windows installer downloads."""
+"""GitHub Releases update checks and verified portable executable downloads."""
 
 import hashlib
 import json
@@ -39,12 +39,11 @@ def version_tuple(value: str) -> tuple[int, ...]:
     return tuple(int(part) for part in match.groups())
 
 
-def _installer_asset(asset: dict, repository: str) -> bool:
+def _portable_asset(asset: dict, repository: str) -> bool:
     name = asset.get("name", "")
     if Path(name).name != name or "\\" in name:
         return False
-    if not (name.lower().endswith(".msi") or
-            (name.lower().endswith(".exe") and re.search(r"setup|installer", name, re.I))):
+    if not name.lower().endswith("-portable.exe"):
         return False
     url = urlsplit(asset.get("browser_download_url", ""))
     return (url.scheme == "https" and url.netloc == "github.com"
@@ -74,17 +73,17 @@ def check_latest_release(repository: str) -> Release:
     if data.get("draft") or data.get("prerelease"):
         raise ValueError("当前没有可用的正式版本。")
     return Release(version, f"https://github.com/{repository}/releases/latest", data.get("body") or "",
-                   next((asset for asset in data.get("assets", []) if _installer_asset(asset, repository)), None))
+                   next((asset for asset in data.get("assets", []) if _portable_asset(asset, repository)), None))
 
 
-def download_installer(release: Release, repository: str, progress=lambda value: None) -> Path:
+def download_release(release: Release, repository: str, progress=lambda value: None) -> Path:
     repository = normalize_repository(repository)
     asset = release.asset
-    if not asset or not _installer_asset(asset, repository):
-        raise ValueError("此版本未提供可校验的 Windows 安装包，请前往发布页下载。")
+    if not asset or not _portable_asset(asset, repository):
+        raise ValueError("此版本未提供可校验的单文件便携版，请前往发布页下载。")
     size = asset.get("size", 0)
     if not isinstance(size, int) or not 0 < size <= 2 * 1024**3:
-        raise ValueError("安装包大小无效。")
+        raise ValueError("更新文件大小无效。")
     folder = Path(tempfile.mkdtemp(prefix="hdu-invoice-update-"))
     target = folder / asset["name"]
     digest = hashlib.sha256()
@@ -95,17 +94,17 @@ def download_installer(release: Release, repository: str, progress=lambda value:
             if final_url.scheme != "https" or not (
                 final_url.hostname == "github.com" or (final_url.hostname or "").endswith(".githubusercontent.com")
             ):
-                raise ValueError("安装包下载地址无效。")
+                raise ValueError("更新文件下载地址无效。")
             received = 0
             while chunk := response.read(256 * 1024):
                 received += len(chunk)
                 if received > size:
-                    raise ValueError("安装包大小与发布信息不一致。")
+                    raise ValueError("更新文件大小与发布信息不一致。")
                 output.write(chunk)
                 digest.update(chunk)
                 progress(int(received * 100 / size))
         if received != size or digest.hexdigest().lower() != asset["digest"].split(":", 1)[1].lower():
-            raise ValueError("安装包校验失败，已取消安装，请重新检查更新。")
+            raise ValueError("更新文件校验失败，已取消更新，请重新检查。")
         return target
     except Exception:
         target.unlink(missing_ok=True)

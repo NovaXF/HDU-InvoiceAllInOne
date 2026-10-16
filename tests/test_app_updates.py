@@ -6,18 +6,18 @@ import unittest
 from urllib.error import HTTPError
 from unittest.mock import patch
 
-from core.app_updates import Release, check_latest_release, download_installer, normalize_repository, version_tuple
+from core.app_updates import Release, check_latest_release, download_release, normalize_repository, version_tuple
 
 
 class Response(io.BytesIO):
     def geturl(self):
-        return "https://release-assets.githubusercontent.com/release/setup.exe"
+        return "https://release-assets.githubusercontent.com/release/app-Portable.exe"
 
 
 class UpdateTests(unittest.TestCase):
     def release_data(self, payload=b"verified installer"):
-        asset = {"name": "HDU-Setup.exe", "size": len(payload),
-                 "browser_download_url": "https://github.com/test/app/releases/download/v1.1.0/HDU-Setup.exe",
+        asset = {"name": "HDU-Portable.exe", "size": len(payload),
+                 "browser_download_url": "https://github.com/test/app/releases/download/v1.1.0/HDU-Portable.exe",
                  "digest": "sha256:" + hashlib.sha256(payload).hexdigest()}
         return {"tag_name": "v1.1.0", "body": "Changes", "assets": [asset]}
 
@@ -38,7 +38,7 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(release.asset, data["assets"][0])
         progress = []
         with patch("core.app_updates.urlopen", return_value=Response(b"verified installer")):
-            path = download_installer(release, "test/app", progress.append)
+            path = download_release(release, "test/app", progress.append)
         try:
             self.assertEqual(path.read_bytes(), b"verified installer")
             self.assertEqual(progress[-1], 100)
@@ -47,7 +47,7 @@ class UpdateTests(unittest.TestCase):
 
     def test_no_installer_for_unverified_or_foreign_asset(self):
         for change in ({"digest": None}, {"browser_download_url": "https://example.com/HDU-Setup.exe"},
-                       {"name": "../HDU-Setup.exe"}, {"name": "portable.exe"}):
+                       {"name": "../HDU-Portable.exe"}, {"name": "HDU-Setup.exe"}, {"name": "portable.exe"}):
             data = self.release_data()
             data["assets"][0].update(change)
             with patch("core.app_updates.urlopen", return_value=Response(json.dumps(data).encode())):
@@ -58,7 +58,7 @@ class UpdateTests(unittest.TestCase):
         release = Release("v1.1.0", "", "", data["assets"][0])
         with patch("core.app_updates.urlopen", return_value=Response(b"evil")):
             with self.assertRaisesRegex(ValueError, "校验失败"):
-                download_installer(release, "test/app")
+                download_release(release, "test/app")
 
     def test_unpublished_repository_has_useful_error(self):
         with patch("core.app_updates.urlopen", side_effect=HTTPError("", 404, "Not Found", None, None)):

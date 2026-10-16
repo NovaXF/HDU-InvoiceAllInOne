@@ -7,6 +7,18 @@ from startup_controller import StartupController
 
 
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--apply-update":
+        from pathlib import Path
+        from core.portable_update import apply_update
+        result = apply_update(Path(sys.argv[2]))
+        if not result["success"]:
+            from PySide6.QtWidgets import QMessageBox
+            app = QApplication([])
+            QMessageBox.warning(None, "更新未完成", result.get("error", "请从发布页重新下载便携版。"))
+        raise SystemExit(0 if result["success"] else 1)
+    if len(sys.argv) == 3 and sys.argv[1] == "--smoke-test":
+        from core.packaged_smoke_test import run
+        raise SystemExit(run(sys.argv[2]))
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setFont(QFont("Microsoft YaHei UI", 9))
