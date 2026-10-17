@@ -2240,8 +2240,8 @@ class MainWindow(QMainWindow):
                 "当前版本与更新",
                 "设置页会显示当前版本；使用说明标题下的“适用版本”与其保持一致。",
                 [
-                    "填写公开 GitHub 仓库地址后点击“检查更新”，程序会在后台查找最新正式 Release；未发布版本时会明确提示。",
-                    "点击“GitHub 下载”会直接在浏览器打开当前仓库的最新正式发布页，无需先检查更新；检查失败或被限流时也能使用。",
+                    "启动后会自动在后台检查一次正式版本，也可手动点击“检查更新”。优先通过发布网页确认版本，网页不可用时尝试备用接口；检查失败不会自动判定为最新。",
+                    "点击“前往下载”会直接在浏览器打开当前仓库的最新正式发布页，无需先检查更新；检查失败或被限流时也能使用。",
                     "在发布页下载 Portable.exe；保存工作区并关闭旧程序后，再用下载的新版替换旧 exe。本地数据位置不变时，设置会继续保留。",
                     "在设置的“本地数据位置”可以打开文件夹或更改保存位置；现有设置会复制到新位置，原设置保留为备份，发票和报销输出目录单独管理。",
                 ],
@@ -2334,7 +2334,7 @@ class MainWindow(QMainWindow):
         self.btn_check_updates.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.btn_check_updates.clicked.connect(self._check_updates)
         version_row.addWidget(self.btn_check_updates)
-        self.btn_github_download = QPushButton("GitHub 下载")
+        self.btn_github_download = QPushButton("前往下载")
         self.btn_github_download.setObjectName("PrimaryButton")
         self.btn_github_download.setProperty("updateAction", True)
         self.btn_github_download.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
@@ -2349,7 +2349,7 @@ class MainWindow(QMainWindow):
         self.edit_update_repository.editingFinished.connect(self._save_update_repository)
         repository_row.addWidget(self.edit_update_repository, 1)
         version_layout.addLayout(repository_row)
-        self.lbl_update_status = QLabel("可检查正式版本，或直接点击“GitHub 下载”前往发布页。")
+        self.lbl_update_status = QLabel("可检查正式版本，或直接点击“前往下载”前往发布页。")
         self.lbl_update_status.setObjectName("HelperText")
         self.lbl_update_status.setWordWrap(True)
         version_layout.addWidget(self.lbl_update_status)
@@ -2376,10 +2376,6 @@ class MainWindow(QMainWindow):
         self.btn_move_data_directory.clicked.connect(self._change_data_directory)
         data_row.addWidget(self.btn_move_data_directory)
         data_layout.addLayout(data_row)
-        data_hint = QLabel("保存主题、常用报销人及偏好设置。更改位置会复制现有设置，发票和报销输出目录单独管理。")
-        data_hint.setObjectName("HelperText")
-        data_hint.setWordWrap(True)
-        data_layout.addWidget(data_hint)
         layout.addWidget(data_panel)
 
         theme_panel = QFrame()
@@ -2510,10 +2506,10 @@ class MainWindow(QMainWindow):
         if not newer:
             self.lbl_update_status.setText(f"当前已是最新版本 v{APP_VERSION}。")
         else:
-            self.lbl_update_status.setText(f"发现 {release.version}，点击“GitHub 下载”前往发布页自助下载。")
+            self.lbl_update_status.setText(f"发现 {release.version}，点击“前往下载”前往发布页自助下载。")
 
     def _on_update_error(self, message):
-        self.lbl_update_status.setText(f"检查未完成：{message} 仍可点击“GitHub 下载”前往发布页。")
+        self.lbl_update_status.setText(f"检查未完成：{message} 仍可点击“前往下载”前往发布页。")
 
     def _open_release_page(self):
         try:

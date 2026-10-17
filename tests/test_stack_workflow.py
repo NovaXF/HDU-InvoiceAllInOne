@@ -418,6 +418,18 @@ class StackWorkflowTests(unittest.TestCase):
         self.window._on_update_finished()
         self.assertTrue(self.window.btn_check_updates.isEnabled())
 
+    def test_startup_schedules_background_check_without_opening_settings(self):
+        from startup_controller import StartupController
+        from unittest.mock import Mock
+        controller = object.__new__(StartupController)
+        controller.window = self.window
+        controller.splash = Mock()
+        controller.splash.screen.return_value = None
+        with patch("startup_controller.QTimer.singleShot") as schedule:
+            controller._show_main_window()
+        schedule.assert_called_once_with(1000, self.window._check_updates)
+        self.assertEqual(self.window.pages.currentIndex(), 0)
+
     def test_settings_data_location_moves_and_survives_reload(self):
         from core.app_paths import load_settings, settings_path
         with TemporaryDirectory() as folder:

@@ -5,8 +5,9 @@ import json
 import re
 import tempfile
 from dataclasses import dataclass
+from http.client import HTTPException
 from pathlib import Path
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.parse import unquote, urlsplit
 from urllib.request import Request, urlopen
 
@@ -51,7 +52,22 @@ def _portable_asset(asset: dict, repository: str) -> bool:
             and bool(re.fullmatch(r"sha256:[a-fA-F0-9]{64}", asset.get("digest") or "")))
 
 
-def check_latest_release(repository: str) -> Release:
+def _check_release_page(repository: str) -> Release:
+    """Read GitHub's latest-release redirect without using its REST API quota."""
+    request = Request(f"https://github.com/{repository}/releases/latest", method="HEAD", headers={
+        "User-Agent": f"HDU-InvoiceAllInOne/{APP_VERSION}",
+    })
+    with urlopen(request, timeout=10) as response:
+        final = urlsplit(response.geturl())
+    prefix = f"/{repository}/releases/tag/"
+    if final.scheme != "https" or final.netloc != "github.com" or not final.path.lower().startswith(prefix.lower()):
+        raise ValueError("无法从发布页确认正式版本。")
+    version = unquote(final.path[len(prefix):])
+    version_tuple(version)
+    return Release(version, f"https://github.com/{repository}/releases/latest", "", None)
+
+
+def _check_release_api(repository: str) -> Release:
     repository = normalize_repository(repository)
     request = Request(f"https://api.github.com/repos/{repository}/releases/latest", headers={
         "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
@@ -63,10 +79,12 @@ def check_latest_release(repository: str) -> Release:
     except HTTPError as error:
         if error.code == 404:
             raise ValueError("尚未找到正式 Release，请确认仓库公开且已发布正式版本。") from error
-        if error.code in (403, 429):
-            raise ValueError("GitHub 暂时限制了访问，请稍后重试。") from error
+        if error.code == 429 or (error.code == 403 and error.headers and error.headers.get("X-RateLimit-Remaining") == "0"):
+            raise ValueError("发布网页暂不可用，备用 GitHub 接口也已限流，请稍后重试或前往下载。") from error
+        if error.code == 403:
+            raise ValueError("GitHub 拒绝了备用接口请求（403），可点击前往下载。") from error
         raise ValueError(f"GitHub 请求失败（{error.code}）") from error
-    except (URLError, TimeoutError) as error:
+    except (OSError, HTTPException) as error:
         raise ValueError("无法连接 GitHub，请检查网络后重试。") from error
     version = data.get("tag_name", "")
     version_tuple(version)
@@ -74,6 +92,16 @@ def check_latest_release(repository: str) -> Release:
         raise ValueError("当前没有可用的正式版本。")
     return Release(version, f"https://github.com/{repository}/releases/latest", data.get("body") or "",
                    next((asset for asset in data.get("assets", []) if _portable_asset(asset, repository)), None))
+
+
+def check_latest_release(repository: str) -> Release:
+    repository = normalize_repository(repository)
+    try:
+        return _check_release_page(repository)
+    except (OSError, HTTPException, ValueError):
+        # Some networks block the website but allow the API. Either source may
+        # confirm a version; never infer "latest" from a failed request.
+        return _check_release_api(repository)
 
 
 def download_release(release: Release, repository: str, progress=lambda value: None) -> Path:

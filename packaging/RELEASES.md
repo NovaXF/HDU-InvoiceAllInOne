@@ -40,10 +40,13 @@ migration fallback.
 
 The settings page provides two independent actions:
 
-- Check for updates: reads the latest non-draft, non-prerelease GitHub Release
-  and compares its three-part version tag with the current version. Anonymous API
-  requests can be rate limited; failure does not disable the download action.
-- GitHub download: immediately opens the configured repository's
+- Check for updates: follows the GitHub `/releases/latest` webpage redirect using
+  HEAD and compares the confirmed release tag with the current version. This path
+  does not consume REST API quota. If the webpage is unavailable or does not resolve
+  to a valid release of the configured repository, the REST API is tried as a fallback.
+  A failed check never reports that the application is up to date. One quiet background
+  check is scheduled after startup; users can also check manually.
+- Go to download: immediately opens the configured repository's
   `https://github.com/<owner>/<repo>/releases/latest` page in the default browser.
   No API check, newer version, asset digest, or saved workspace is required to open
   this page. Users choose the portable executable themselves.

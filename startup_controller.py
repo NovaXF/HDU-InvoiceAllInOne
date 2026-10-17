@@ -42,3 +42,5 @@ class StartupController:
             self.window.move(geometry.center() - self.window.rect().center())
         self.window.show()
         self.splash.finish(self.window)
+        # Check quietly after the main window appears; network I/O runs in QThread.
+        QTimer.singleShot(1000, self.window._check_updates)
