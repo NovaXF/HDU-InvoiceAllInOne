@@ -1,7 +1,5 @@
 import json
 import subprocess
-import shutil
-import sys
 from copy import deepcopy
 from functools import wraps
 from pathlib import Path
@@ -60,8 +58,7 @@ from core.order_matcher import bind_screenshot_to_invoice, match_screenshots_to_
 from core.order_screenshot_parser import extract_paid_amount_details
 from core.pdf_parser import extract_invoice_data
 from core.recycle_bin import recycle_file
-from core.app_updates import check_latest_release, download_release, normalize_repository, version_tuple
-from core.portable_update import launch_helper, prepare_update
+from core.app_updates import check_latest_release, normalize_repository, version_tuple
 from core.app_paths import load_settings, relocate_data_directory, settings_path, write_json_atomic
 from app_version import APP_VERSION, GITHUB_REPOSITORY
 from core.stack_splitter import (
@@ -509,18 +506,14 @@ class SaveFilterButton(QAbstractButton):
 class UpdateWorker(QThread):
     result = Signal(object)
     failed = Signal(str)
-    progress = Signal(int)
 
-    def __init__(self, repository, release=None):
+    def __init__(self, repository):
         super().__init__()
         self.repository = repository
-        self.release = release
 
     def run(self):
         try:
-            result = (download_release(self.release, self.repository, self.progress.emit)
-                      if self.release else check_latest_release(self.repository))
-            self.result.emit(result)
+            self.result.emit(check_latest_release(self.repository))
         except Exception as error:
             self.failed.emit(str(error))
 
@@ -1885,8 +1878,6 @@ class MainWindow(QMainWindow):
         self._parsing_screenshots = False
         self._update_worker = None
         self._update_release = None
-        self._downloaded_installer = None
-        self._pending_update_path = None
 
         self._build_ui()
         for button in self.findChildren(QPushButton):
@@ -2250,10 +2241,9 @@ class MainWindow(QMainWindow):
                 "设置页会显示当前版本；使用说明标题下的“适用版本”与其保持一致。",
                 [
                     "填写公开 GitHub 仓库地址后点击“检查更新”，程序会在后台查找最新正式 Release；未发布版本时会明确提示。",
-                    "发现带有可校验 Windows 单文件便携版的新版后，“一键更新”才会启用；也可以点击“查看发布说明”。",
-                    "更新前先保存工作区；新版下载完成并通过校验后，程序会自动替换并重新启动，无需安装。旧程序副本保留在本地数据目录的 updates 文件夹。",
+                    "点击“GitHub 下载”会直接在浏览器打开当前仓库的最新正式发布页，无需先检查更新；检查失败或被限流时也能使用。",
+                    "在发布页下载 Portable.exe；保存工作区并关闭旧程序后，再用下载的新版替换旧 exe。本地数据位置不变时，设置会继续保留。",
                     "在设置的“本地数据位置”可以打开文件夹或更改保存位置；现有设置会复制到新位置，原设置保留为备份，发票和报销输出目录单独管理。",
-                    "源码运行时，一键更新会下载便携程序并打开所在文件夹，现有 Python 环境继续保留。",
                 ],
             ),
         ]
@@ -2344,13 +2334,13 @@ class MainWindow(QMainWindow):
         self.btn_check_updates.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.btn_check_updates.clicked.connect(self._check_updates)
         version_row.addWidget(self.btn_check_updates)
-        self.btn_install_update = QPushButton("一键更新")
-        self.btn_install_update.setObjectName("PrimaryButton")
-        self.btn_install_update.setProperty("updateAction", True)
-        self.btn_install_update.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.btn_install_update.setEnabled(False)
-        self.btn_install_update.clicked.connect(self._install_update)
-        version_row.addWidget(self.btn_install_update)
+        self.btn_github_download = QPushButton("GitHub 下载")
+        self.btn_github_download.setObjectName("PrimaryButton")
+        self.btn_github_download.setProperty("updateAction", True)
+        self.btn_github_download.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.btn_github_download.setToolTip("在浏览器打开 GitHub 发布页，自助下载新版，无需先检查更新。")
+        self.btn_github_download.clicked.connect(self._open_release_page)
+        version_row.addWidget(self.btn_github_download)
         version_layout.addLayout(version_row)
         repository_row = QHBoxLayout()
         repository_row.addWidget(QLabel("GitHub 仓库"))
@@ -2359,15 +2349,10 @@ class MainWindow(QMainWindow):
         self.edit_update_repository.editingFinished.connect(self._save_update_repository)
         repository_row.addWidget(self.edit_update_repository, 1)
         version_layout.addLayout(repository_row)
-        self.lbl_update_status = QLabel("设置 GitHub 仓库后，即可检查正式版本更新。")
+        self.lbl_update_status = QLabel("可检查正式版本，或直接点击“GitHub 下载”前往发布页。")
         self.lbl_update_status.setObjectName("HelperText")
         self.lbl_update_status.setWordWrap(True)
         version_layout.addWidget(self.lbl_update_status)
-        self.btn_release_page = QPushButton("查看发布说明")
-        self.btn_release_page.setObjectName("OutlineButton")
-        self.btn_release_page.setVisible(False)
-        self.btn_release_page.clicked.connect(self._open_release_page)
-        version_layout.addWidget(self.btn_release_page, 0, Qt.AlignLeft)
         layout.addWidget(self.version_panel)
 
         data_panel = QFrame()
@@ -2487,17 +2472,11 @@ class MainWindow(QMainWindow):
             except ValueError as error:
                 self.lbl_update_status.setText(str(error))
                 self._update_release = None
-                self._downloaded_installer = None
-                self.btn_install_update.setEnabled(False)
-                self.btn_release_page.setVisible(False)
                 return
         if value != self.settings.get("github_repository", GITHUB_REPOSITORY):
             self.settings["github_repository"] = value
             self._save_settings()
             self._update_release = None
-            self._downloaded_installer = None
-            self.btn_install_update.setEnabled(False)
-            self.btn_release_page.setVisible(False)
 
     def _check_updates(self):
         if self._update_worker is not None and self._update_worker.isRunning():
@@ -2509,9 +2488,6 @@ class MainWindow(QMainWindow):
             return
         self._save_update_repository()
         self._update_release = None
-        self._downloaded_installer = None
-        self.btn_install_update.setEnabled(False)
-        self.btn_release_page.setVisible(False)
         self.lbl_update_status.setText("正在检查 GitHub 正式版本…")
         self._start_update_worker(UpdateWorker(repository), self._on_update_checked)
 
@@ -2527,76 +2503,32 @@ class MainWindow(QMainWindow):
     def _on_update_finished(self):
         self.btn_check_updates.setEnabled(True)
         self.edit_update_repository.setEnabled(True)
-        if self._pending_update_path is not None:
-            path, self._pending_update_path = self._pending_update_path, None
-            self._on_installer_ready(path)
 
     def _on_update_checked(self, release):
         self._update_release = release
-        self.btn_release_page.setVisible(True)
         newer = version_tuple(release.version) > version_tuple(APP_VERSION)
-        self.btn_install_update.setEnabled(newer and release.asset is not None)
         if not newer:
             self.lbl_update_status.setText(f"当前已是最新版本 v{APP_VERSION}。")
-        elif release.asset is None:
-            self.lbl_update_status.setText(f"发现 {release.version}，此版本尚未提供可校验的便携版，可前往发布页查看。")
         else:
-            self.lbl_update_status.setText(f"发现 {release.version}，可一键下载并重启更新，无需安装。")
+            self.lbl_update_status.setText(f"发现 {release.version}，点击“GitHub 下载”前往发布页自助下载。")
 
     def _on_update_error(self, message):
-        self.lbl_update_status.setText(f"更新未完成：{message}")
-        release = self._update_release
-        self.btn_install_update.setEnabled(bool(release and release.asset and version_tuple(release.version) > version_tuple(APP_VERSION)))
+        self.lbl_update_status.setText(f"检查未完成：{message} 仍可点击“GitHub 下载”前往发布页。")
 
     def _open_release_page(self):
-        if self._update_release:
-            QDesktopServices.openUrl(QUrl(self._update_release.url))
-
-    def _install_update(self):
-        if not self._update_release or not self._update_release.asset:
-            return
-        if self._update_worker is not None and self._update_worker.isRunning():
-            return
-        if self._workspace_busy() or self._undo_history:
-            self.lbl_update_status.setText("请先完成识别并保存工作区，再进行更新。")
-            return
-        if self._downloaded_installer is not None and self._downloaded_installer.is_file():
-            self._on_installer_ready(self._downloaded_installer)
-            return
-        self.btn_install_update.setEnabled(False)
-        worker = UpdateWorker(normalize_repository(self.edit_update_repository.text()), self._update_release)
-        worker.progress.connect(lambda value: self.lbl_update_status.setText(f"正在下载便携版… {value}%"))
-        self._start_update_worker(worker, self._on_installer_ready)
-
-    def _on_installer_ready(self, path):
-        self._downloaded_installer = path
-        if self._workspace_busy() or self._undo_history:
-            self.lbl_update_status.setText("新版已下载；请先保存工作区，再点击“一键更新”。")
-            self.btn_install_update.setEnabled(True)
-            return
-        if self._update_worker is not None and self._update_worker.isRunning():
-            self._pending_update_path = path
-            return
         try:
-            if getattr(sys, "frozen", False):
-                plan = prepare_update(path, Path(sys.executable), self.settings_path.parent)
-                launch_helper(path, plan)
-                self.close()
-            else:
-                directory = self.settings_path.parent / "updates"
-                directory.mkdir(parents=True, exist_ok=True)
-                destination = directory / path.name
-                if destination.resolve() != path.resolve():
-                    shutil.copy2(path, destination)
-                self.lbl_update_status.setText("便携版已下载，已打开所在文件夹；源码运行环境保持不变。")
-                QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
-        except (OSError, ValueError) as error:
-            self._on_update_error(str(error))
+            repository = normalize_repository(self.edit_update_repository.text())
+        except ValueError as error:
+            self.lbl_update_status.setText(str(error))
+            return
+        self._save_update_repository()
+        if not QDesktopServices.openUrl(QUrl(f"https://github.com/{repository}/releases/latest")):
+            self.lbl_update_status.setText("无法打开浏览器，请手动访问 GitHub 仓库的 Releases 页面。")
 
     def closeEvent(self, event):
         if self._update_worker is not None and self._update_worker.isRunning():
             self._switch_page(3)
-            self.lbl_update_status.setText("更新任务仍在进行，请完成后再关闭窗口。")
+            self.lbl_update_status.setText("正在检查更新，请完成后再关闭窗口。")
             event.ignore()
             return
         super().closeEvent(event)

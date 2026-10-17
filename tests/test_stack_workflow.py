@@ -371,40 +371,52 @@ class StackWorkflowTests(unittest.TestCase):
             self.assertEqual(positions[0], positions[1])
             self.assertTrue(self.window.version_panel._renderer.isValid())
 
-    def test_update_ui_only_enables_for_newer_installable_release(self):
-        for release, expected in (
-            (Release(APP_VERSION, "", "", {"name": "Setup.exe"}), False),
-            (Release("9.0.0", "", "", None), False),
-            (Release("9.0.0", "", "", {"name": "Setup.exe"}), True),
+    def test_github_download_available_before_check_and_after_any_result(self):
+        self.assertTrue(self.window.btn_github_download.isEnabled())
+        for release in (
+            Release(APP_VERSION, "", "", None),
+            Release("9.0.0", "", "", None),
+            Release("9.0.0", "", "", {"name": "HDU-Portable.exe"}),
         ):
             self.window._on_update_checked(release)
-            self.assertEqual(self.window.btn_install_update.isEnabled(), expected)
+            self.assertTrue(self.window.btn_github_download.isEnabled())
+        self.window._on_update_error("GitHub 暂时限制了访问")
+        self.assertTrue(self.window.btn_github_download.isEnabled())
+        self.assertIn("仍可点击", self.window.lbl_update_status.text())
 
-    def test_update_installer_does_not_launch_with_unsaved_edits(self):
+    def test_download_opens_configured_release_page_without_api_or_save_requirement(self):
         self.add_invoices([16])
         self.window._split_left_invoices_into_stacks()
-        with patch("ui.main_window.subprocess.Popen") as launch:
-            self.window._on_installer_ready(Path("Setup.exe"))
-        launch.assert_not_called()
+        self.window.edit_update_repository.setText("https://github.com/example/custom-app.git")
+        with patch("ui.main_window.QDesktopServices.openUrl", return_value=True) as open_url, patch("ui.main_window.check_latest_release") as check:
+            self.window.btn_github_download.click()
+        check.assert_not_called()
+        self.assertEqual(open_url.call_args.args[0].toString(), "https://github.com/example/custom-app/releases/latest")
+        self.assertEqual(self.window.settings["github_repository"], "example/custom-app")
+        self.assertTrue(self.window.isVisible())
 
-    def test_source_update_download_is_kept_without_overwriting_source(self):
-        with TemporaryDirectory() as folder:
-            root = Path(folder)
-            source = root / "HDU-Portable.exe"
-            source.write_bytes(b"verified download")
-            self.window.settings_path = root / "data" / "settings.json"
-            with patch("ui.main_window.sys.frozen", False, create=True), patch("ui.main_window.QDesktopServices.openUrl") as open_url:
-                self.window._on_installer_ready(source)
-            self.assertEqual((root / "data" / "updates" / source.name).read_bytes(), source.read_bytes())
-            open_url.assert_called_once()
+    def test_download_rejects_invalid_repository_and_reports_browser_failure(self):
+        self.window.edit_update_repository.setText("https://example.com/test/app")
+        with patch("ui.main_window.QDesktopServices.openUrl") as open_url:
+            self.window.btn_github_download.click()
+        open_url.assert_not_called()
+        self.window.edit_update_repository.setText("test/app")
+        with patch("ui.main_window.QDesktopServices.openUrl", return_value=False):
+            self.window.btn_github_download.click()
+        self.assertIn("无法打开浏览器", self.window.lbl_update_status.text())
 
-    def test_frozen_update_starts_helper_then_closes(self):
-        source = Path("HDU-Portable.exe")
-        with patch("ui.main_window.sys.frozen", True, create=True), patch("ui.main_window.prepare_update", return_value=Path("plan.json")) as prepare, patch("ui.main_window.launch_helper") as launch, patch.object(self.window, "close") as close:
-            self.window._on_installer_ready(source)
-        prepare.assert_called_once()
-        launch.assert_called_once_with(source, Path("plan.json"))
-        close.assert_called_once()
+    def test_download_remains_available_while_update_check_runs(self):
+        from unittest.mock import Mock
+        worker = Mock()
+        with patch("ui.main_window.QDesktopServices.openUrl", return_value=True) as open_url:
+            self.window._start_update_worker(worker, self.window._on_update_checked)
+            self.assertFalse(self.window.btn_check_updates.isEnabled())
+            self.assertTrue(self.window.btn_github_download.isEnabled())
+            self.window.btn_github_download.click()
+        open_url.assert_called_once()
+        worker.isRunning.return_value = False
+        self.window._on_update_finished()
+        self.assertTrue(self.window.btn_check_updates.isEnabled())
 
     def test_settings_data_location_moves_and_survives_reload(self):
         from core.app_paths import load_settings, settings_path

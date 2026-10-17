@@ -38,17 +38,17 @@ migration fallback.
 
 ## Updates
 
-The updater reads the latest non-draft, non-prerelease GitHub Release. Tags use
-three numeric version parts. It accepts only an asset ending in `-Portable.exe`
-from the configured repository with a GitHub SHA-256 digest. Downloaded bytes
-must match both the published size and digest before execution.
+The settings page provides two independent actions:
 
-Users save their workspace, then choose one-click update. A separate instance of
-the downloaded executable waits for the current executable to exit, atomically
-replaces it at its existing path, and restarts it. The executable may have been
-renamed by the user. Before replacement, the old executable is copied into the
-local data folder under `updates/update-*/previous.exe`; preferences are preserved.
-If the new process cannot be launched, replacement is rolled back. A result report
-is kept alongside the backup. Updating requires write access to the executable's
-folder. Source checkouts download the portable executable and open its folder
-instead of replacing their Python sources.
+- Check for updates: reads the latest non-draft, non-prerelease GitHub Release
+  and compares its three-part version tag with the current version. Anonymous API
+  requests can be rate limited; failure does not disable the download action.
+- GitHub download: immediately opens the configured repository's
+  `https://github.com/<owner>/<repo>/releases/latest` page in the default browser.
+  No API check, newer version, asset digest, or saved workspace is required to open
+  this page. Users choose the portable executable themselves.
+
+Save and close the application before manually replacing its executable. Preferences
+remain in the configured local data directory. The UI does not download files,
+replace executables, or restart the app. The legacy update-helper command remains
+available for compatibility with previously released clients.
