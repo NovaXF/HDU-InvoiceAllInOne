@@ -40,7 +40,10 @@ def run(output_path):
         from core.app_paths import default_data_directory, load_settings, relocate_data_directory, settings_path
         from ui.main_window import MainWindow
         from ui.splash_screen import SplashScreen
+        from ui.app_identity import apply_application_icon, set_windows_app_id
+        set_windows_app_id()
         app = QApplication([])
+        apply_application_icon(app)
         app.setStyle("Fusion")
         window = MainWindow()
         window.show()
@@ -50,6 +53,9 @@ def run(output_path):
         assert splash.wordmark.renderer.isValid()
         assert window.version_panel._renderer.isValid()
         report["ui"] = window.isVisible()
+        assert not window.windowIcon().isNull()
+        assert not splash.windowIcon().isNull()
+        report["application_icon"] = True
         window._save_settings()
         assert settings_path().is_file()
         destination = default_data_directory().parent / "custom-data"

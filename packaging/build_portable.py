@@ -8,18 +8,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from app_version import APP_VERSION
+from build_icon import build_icon
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dist-dir", default="dist")
     args = parser.parse_args()
+    icon = build_icon()
     build = ROOT / "build" / "portable"
     build.mkdir(parents=True, exist_ok=True)
     name = f"HDU-InvoiceAllInOne-v{APP_VERSION}-Portable"
     command = [
         sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed", "--onefile",
         "--name", name, "--distpath", str(ROOT / args.dist_dir),
+        "--icon", str(icon),
         "--workpath", str(build), "--specpath", str(build),
         "--add-data", f"{ROOT / 'assets'}:assets",
         "--collect-all", "rapidocr_onnxruntime", "--collect-all", "onnxruntime",
