@@ -942,17 +942,19 @@ class StackTree(QTreeWidget):
         event.acceptProposedAction()
 
     def startDrag(self, supported_actions):
-        item = self.currentItem()
-        if item is None:
-            return
-        payload = item.data(0, Qt.UserRole)
-        if not isinstance(payload, tuple) or len(payload) < 2 or payload[0] != MainWindow.INVOICE_ITEM:
-            return
-        invoice_id = payload[1]
-        if not invoice_id:
+        # Selection order can differ from row order (e.g. Ctrl-clicking upwards).
+        # Always move the selected invoices together in their displayed order.
+        invoice_ids = []
+        iterator = QTreeWidgetItemIterator(self, QTreeWidgetItemIterator.Selected)
+        while iterator.value():
+            payload = iterator.value().data(0, Qt.UserRole)
+            if isinstance(payload, tuple) and len(payload) >= 2 and payload[0] == MainWindow.INVOICE_ITEM and payload[1]:
+                invoice_ids.append(payload[1])
+            iterator += 1
+        if not invoice_ids:
             return
         mime = QMimeData()
-        mime.setData("application/x-invoice-id", invoice_id.encode("utf-8"))
+        mime.setData("application/x-invoice-id", "\n".join(invoice_ids).encode("utf-8"))
         drag = QDrag(self)
         drag.setMimeData(mime)
         drag.exec(Qt.MoveAction)
@@ -2194,7 +2196,7 @@ class MainWindow(QMainWindow):
                 "拖动调整与 Delete 删除",
                 "Delete 的作用取决于当前操作的区域，发票区和订单截图区均支持多选。",
                 [
-                    "右侧选中发票按 Delete，会将发票及绑定截图返还左侧，同时解除绑定；也可将发票直接拖回左侧。",
+                    "右侧支持 Ctrl 多选或 Shift 连选，可一起拖动换叠或拖回左侧。按 Delete 也会将所选发票及绑定截图返还左侧，并解除绑定。",
                     "左侧选中发票或订单截图按 Delete，只从工作区移除所选项目，源文件仍然保留。",
                     "右侧支持拖动排序，行间插入线和左侧三角形表示准确位置；松手后保留滚动位置，并显示短暂过渡动画。",
                     "手动调整可能造成超限；超限叠会显示警告标记，并在保存时列出超出的张数或金额并停止输出。",
@@ -2809,6 +2811,7 @@ class MainWindow(QMainWindow):
         self.tree.header().setSectionResizeMode(6, QHeaderView.Fixed)
         self.tree.setAlternatingRowColors(True)
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.tree.setToolTip("Ctrl 多选 / Shift 连选；拖动所选发票一起换叠或返回左侧。")
         self.tree.setIndentation(0)
         self.tree.setUniformRowHeights(False)
         self.tree.setFocusPolicy(Qt.StrongFocus)
@@ -4152,7 +4155,7 @@ class MainWindow(QMainWindow):
             for position, invoice in enumerate(target_stack.invoices)
         }
         apply_remark = False
-        for invoice_id in invoice_ids:
+        for invoice_id in dict.fromkeys(invoice_ids):
             inv = next((x for x in self.invoices if x.invoice_id == invoice_id), None)
             if inv:
                 source_date = self._invoice_date(inv.invoice_id)
@@ -4161,7 +4164,11 @@ class MainWindow(QMainWindow):
                     return
                 ordered.append(inv)
                 apply_remark = apply_remark or inv.stack_index is None
-                self._remove_invoice_from_current_group(inv)
+
+        # Validate every source before changing any stack, so a locked invoice
+        # cannot leave the earlier invoices of a multi-selection half moved.
+        for inv in ordered:
+            self._remove_invoice_from_current_group(inv)
 
         removed_before_target = sum(
             1

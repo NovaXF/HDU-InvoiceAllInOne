@@ -6,9 +6,9 @@ from tempfile import TemporaryDirectory
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFontMetrics
-from PySide6.QtWidgets import QApplication, QMessageBox, QStyleOptionViewItem
+from PySide6.QtCore import Qt, QTimer, QPointF
+from PySide6.QtGui import QFontMetrics, QDropEvent
+from PySide6.QtWidgets import QApplication, QMessageBox, QStyleOptionViewItem, QTreeWidgetItemIterator
 from PySide6.QtTest import QTest
 
 from models.invoice import Invoice, OrderScreenshot, Stack, DateGroup
@@ -56,6 +56,106 @@ class StackWorkflowTests(unittest.TestCase):
             self.assertEqual([stack.index for stack in group.stacks], list(range(1, len(group.stacks) + 1)))
             for stack in group.stacks:
                 self.assertTrue(all(invoice.stack_index == stack.index for invoice in stack.invoices))
+
+    def select_and_drag_tree_invoices(self, invoice_ids):
+        tree = self.window.tree
+        tree.clearSelection()
+        items = {}
+        iterator = QTreeWidgetItemIterator(tree)
+        while iterator.value():
+            item = iterator.value()
+            payload = item.data(0, Qt.UserRole)
+            if isinstance(payload, tuple) and payload[0] == self.window.INVOICE_ITEM:
+                items[payload[1]] = item
+            iterator += 1
+        for position, invoice_id in enumerate(invoice_ids):
+            point = tree.visualItemRect(items[invoice_id]).center()
+            QTest.mouseClick(tree.viewport(), Qt.LeftButton, Qt.NoModifier if position == 0 else Qt.ControlModifier, point)
+        point = tree.visualItemRect(items[invoice_ids[-1]]).center()
+        # Pressing a selected row to drag must not discard the other rows.
+        QTest.mousePress(tree.viewport(), Qt.LeftButton, Qt.NoModifier, point)
+        with patch("ui.main_window.QDrag") as drag:
+            tree.startDrag(Qt.MoveAction)
+        mime = drag.return_value.setMimeData.call_args.args[0]
+        QTest.mouseRelease(tree.viewport(), Qt.LeftButton, Qt.NoModifier, point)
+        return mime
+
+    def test_multiple_tree_invoices_drag_to_other_stack_in_display_order(self):
+        invoices = self.add_invoices([10, 20, 30, 40, 50, 60])
+        self.window.spin_max_count.setValue(3)
+        self.window._split_left_invoices_into_stacks()
+        screenshot = OrderScreenshot(Path("shot.png"), amount=10)
+        self.window.screenshots = [screenshot]
+        self.window._bind_screenshot_to_invoice(screenshot.screenshot_id, invoices[0].invoice_id)
+        mime = self.select_and_drag_tree_invoices([invoices[2].invoice_id, invoices[0].invoice_id])
+        self.assertEqual(bytes(mime.data("application/x-invoice-id")).decode().splitlines(), [invoices[0].invoice_id, invoices[2].invoice_id])
+        target = self.window.tree.topLevelItem(0).child(1)
+        event = QDropEvent(QPointF(self.window.tree.visualItemRect(target).center()), Qt.MoveAction, mime, Qt.LeftButton, Qt.NoModifier)
+        history = len(self.window._undo_history)
+        self.window.tree.dropEvent(event)
+        self.assertTrue(event.isAccepted())
+        stacks = self.window.date_groups[0].stacks
+        self.assertEqual([i.invoice_id for i in stacks[0].invoices], [invoices[1].invoice_id])
+        self.assertEqual([i.invoice_id for i in stacks[1].invoices], [i.invoice_id for i in invoices[3:]] + [invoices[0].invoice_id, invoices[2].invoice_id])
+        self.assertEqual(screenshot.matched_stack_index, 2)
+        self.assertEqual(len(self.window._undo_history), history + 1)
+        self.assert_unique_assignments()
+        self.window._undo_workspace()
+        self.assertEqual([stack.count for stack in self.window.date_groups[0].stacks], [3, 3])
+        self.window._redo_workspace()
+        self.assertEqual([stack.count for stack in self.window.date_groups[0].stacks], [1, 5])
+        self.assert_unique_assignments()
+
+    def test_multiple_tree_invoices_drag_back_left_with_bound_screenshots(self):
+        invoices = self.add_invoices([10, 20, 30, 40])
+        self.window.spin_max_count.setValue(2)
+        self.window._split_left_invoices_into_stacks()
+        self.window.screenshots = [OrderScreenshot(Path(f"shot-{n}.png"), amount=invoices[n].amount) for n in (0, 2)]
+        for screenshot, invoice in zip(self.window.screenshots, (invoices[0], invoices[2])):
+            self.window._bind_screenshot_to_invoice(screenshot.screenshot_id, invoice.invoice_id)
+        mime = self.select_and_drag_tree_invoices([invoices[0].invoice_id, invoices[2].invoice_id])
+        event = QDropEvent(QPointF(10, 10), Qt.MoveAction, mime, Qt.LeftButton, Qt.NoModifier)
+        history = len(self.window._undo_history)
+        self.window.table.dropEvent(event)
+        self.assertTrue(event.isAccepted())
+        self.assertEqual(self.window.table.rowCount(), 2)
+        self.assertEqual(self.window.screenshot_table.rowCount(), 2)
+        self.assertTrue(all(invoices[n].stack_index is None and invoices[n].matched_screenshot_id is None for n in (0, 2)))
+        self.assertTrue(all(s.matched_invoice_id is None for s in self.window.screenshots))
+        self.assertEqual(len(self.window._undo_history), history + 1)
+        self.window._undo_workspace()
+        self.assertEqual([stack.count for stack in self.window.date_groups[0].stacks], [2, 2])
+        self.assertTrue(all(s.matched_invoice_id for s in self.window.screenshots))
+        self.window._redo_workspace()
+        self.assertEqual(self.window.table.rowCount(), 2)
+        self.assert_unique_assignments()
+
+    def test_multi_move_with_locked_source_leaves_all_invoices_untouched(self):
+        invoices = self.add_invoices([10, 20, 30])
+        self.window.date_groups = [DateGroup(str(n), Path("."), [Stack(1, [invoice])], locked=n == 1) for n, invoice in enumerate(invoices)]
+        for invoice in invoices:
+            invoice.stack_index = 1
+        self.window.stacks = self.window.date_groups[0].stacks
+        self.window._render_all()
+        history = len(self.window._undo_history)
+        with patch("ui.main_window.QMessageBox.information"):
+            self.window._handle_invoice_drop([i.invoice_id for i in invoices[:2]], "2", 1, 1)
+            self.window._return_invoices_to_left([i.invoice_id for i in invoices[:2]])
+        for group, invoice in zip(self.window.date_groups, invoices):
+            self.assertEqual(group.stacks[0].invoices, [invoice])
+            self.assertEqual(invoice.stack_index, 1)
+        self.assertEqual(len(self.window._undo_history), history)
+
+    def test_multiple_invoices_reorder_within_same_stack(self):
+        invoices = self.add_invoices([10, 20, 30, 40, 50])
+        self.window._split_left_invoices_into_stacks()
+        mime = self.select_and_drag_tree_invoices([invoices[0].invoice_id, invoices[2].invoice_id])
+        target = self.window.tree.topLevelItem(0).child(0).child(3)
+        point = self.window.tree.visualItemRect(target).bottomLeft()
+        event = QDropEvent(QPointF(point), Qt.MoveAction, mime, Qt.LeftButton, Qt.NoModifier)
+        self.window.tree.dropEvent(event)
+        self.assertEqual(self.window.stacks[0].invoices, [invoices[n] for n in (1, 3, 0, 2, 4)])
+        self.assert_unique_assignments()
 
     def test_return_each_invoice_and_split_again_keeps_one_stack(self):
         invoices = self.add_invoices([80] * 16)
